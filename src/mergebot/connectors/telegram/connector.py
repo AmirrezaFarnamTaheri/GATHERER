@@ -20,6 +20,7 @@ class TelegramConnector(SourceConnector):
         self.token = token
         self.target_chat_id = str(chat_id)
         self.offset = state.get("offset", 0) if state else 0
+        self.is_first_run = (self.offset == 0)
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
     def _make_request(self, method: str, params: Dict[str, Any] = {}) -> Dict[str, Any]:
@@ -50,7 +51,10 @@ class TelegramConnector(SourceConnector):
         # Update offset if provided
         if state and "offset" in state:
             self.offset = state["offset"]
+            if self.offset > 0:
+                self.is_first_run = False
 
+        cutoff_time = time.time() - (72 * 3600)
         has_more = True
 
         while has_more:
@@ -82,6 +86,12 @@ class TelegramConnector(SourceConnector):
                 # Check chat_id
                 if str(msg.get("chat", {}).get("id")) != self.target_chat_id:
                     continue
+
+                # 72 Hours Check for first run
+                if self.is_first_run:
+                    msg_date = msg.get("date", 0)
+                    if msg_date < cutoff_time:
+                         continue
 
                 # Check for document
                 doc = msg.get("document")

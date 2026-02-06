@@ -56,6 +56,17 @@ jobs:
             --db-path persist/state.db \
             run
 
+      - name: Verify Artifacts
+        run: |
+          python tests/verify_artifacts.py
+          cp tests/verify_artifacts.py persist/artifacts/
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mergebot-output
+          path: persist/artifacts/
+
       - name: Persist State
         run: |
           git config user.name "mergebot-bot"

@@ -1,5 +1,6 @@
 import logging
 import datetime
+import os
 from typing import Dict, Any, List
 from ..state.repo import StateRepo
 from ..publishers.telegram.publisher import TelegramPublisher
@@ -14,34 +15,30 @@ class PublishPipeline:
     def run(self, build_result: Dict[str, Any], destinations: List[Dict[str, Any]]):
         route_name = build_result["route_name"]
         new_hash = build_result["artifact_hash"]
+        data = build_result["data"]
 
-        # Check if changed
+        # Save to local artifacts (Always, even if not published to TG)
+        # This ensures GitHub Artifacts are populated
+        artifact_dir = "persist/artifacts"
+        try:
+            os.makedirs(artifact_dir, exist_ok=True)
+            # Use route_name as filename. defaulting to .txt as format is opaque here
+            # Ideally we would know the extension from the format.
+            filename = f"{route_name}.txt"
+            filepath = os.path.join(artifact_dir, filename)
+            with open(filepath, "wb") as f:
+                f.write(data)
+            logger.info(f"Saved artifact to {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to save artifact locally: {e}")
+
+        # Check if changed (for Telegram Publishing)
         last_hash = self.state_repo.get_last_published_hash(route_name)
         if last_hash == new_hash:
             logger.info(f"No change for {route_name}, skipping publish.")
             return
 
         # Publish to all destinations
-        # We need tokens. Assuming destination config has 'token' or we use global?
-        # The prompt config structure:
-        # destinations:
-        #   - chat_id: "..."
-        #     mode: post_on_change
-        #     caption_template: ...
-        # But where is the token?
-        # The source config has token.
-        # Usually publishers need a token.
-        # PROPOSAL: Add 'token' to destination config OR use env var.
-        # The PROMPT config example doesn't show token in destination.
-        # But it shows "sources ... telegram ... token".
-        # Maybe we reuse the source token? Or we need a default bot token?
-        # I'll assume we can pass a token in destination OR use a default one from env.
-        # Let's check config.prod.yaml again.
-        # It doesn't show token in publishing.
-        # I will assume there is a global or per-destination token.
-        # I will use os.getenv("TELEGRAM_TOKEN") as fallback.
-
-        import os
         default_token = os.getenv("TELEGRAM_TOKEN")
 
         published_any = False
@@ -67,18 +64,14 @@ class PublishPipeline:
                 count=build_result.get("count", "?")
             )
 
-            # Filename
-            # Heuristic extension
-            ext = ".txt"
-            # Try to guess from route formats?
-            # If route name implies extension...
-            filename = f"{route_name}_{new_hash[:8]}{ext}"
+            # Filename for Telegram
+            filename_tg = f"{route_name}_{new_hash[:8]}.txt"
 
             try:
-                pub.publish(chat_id, build_result["data"], filename, caption)
+                pub.publish(chat_id, data, filename_tg, caption)
                 published_any = True
-            except Exception:
-                logger.error(f"Failed to publish to {chat_id}")
+            except Exception as e:
+                logger.error(f"Failed to publish to {chat_id}: {e}")
 
         if published_any:
             self.state_repo.mark_published(route_name, new_hash)
