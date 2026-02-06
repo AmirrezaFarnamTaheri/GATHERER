@@ -12,7 +12,7 @@ REJECTS_DIR = DATA_DIR / "rejects"
 STATE_DIR = DATA_DIR / "state"
 LOGS_DIR = DATA_DIR / "logs"
 
-STATE_DB_PATH = STATE_DIR / "state.db"
+STATE_DB_PATH = Path(os.getenv("MERGEBOT_STATE_DB_PATH", str(STATE_DIR / "state.db"))).resolve()
 
 def ensure_dirs():
     """Create all necessary directories."""
