@@ -1,5 +1,6 @@
 import logging
 import datetime
+import os
 from typing import Dict, Any, List
 from ..state.repo import StateRepo
 from ..publishers.telegram.publisher import TelegramPublisher
@@ -13,36 +14,28 @@ class PublishPipeline:
 
     def run(self, build_result: Dict[str, Any], destinations: List[Dict[str, Any]]):
         route_name = build_result["route_name"]
+        fmt = build_result.get("format", "unknown")
         new_hash = build_result["artifact_hash"]
 
+        # Use a composite key for tracking state to support multiple formats per route
+        tracking_key = f"{route_name}:{fmt}"
+
         # Check if changed
-        last_hash = self.state_repo.get_last_published_hash(route_name)
+        last_hash = self.state_repo.get_last_published_hash(tracking_key)
         if last_hash == new_hash:
-            logger.info(f"No change for {route_name}, skipping publish.")
+            logger.info(f"No change for {tracking_key}, skipping publish.")
             return
 
-        # Publish to all destinations
-        # We need tokens. Assuming destination config has 'token' or we use global?
-        # The prompt config structure:
-        # destinations:
-        #   - chat_id: "..."
-        #     mode: post_on_change
-        #     caption_template: ...
-        # But where is the token?
-        # The source config has token.
-        # Usually publishers need a token.
-        # PROPOSAL: Add 'token' to destination config OR use env var.
-        # The PROMPT config example doesn't show token in destination.
-        # But it shows "sources ... telegram ... token".
-        # Maybe we reuse the source token? Or we need a default bot token?
-        # I'll assume we can pass a token in destination OR use a default one from env.
-        # Let's check config.prod.yaml again.
-        # It doesn't show token in publishing.
-        # I will assume there is a global or per-destination token.
-        # I will use os.getenv("TELEGRAM_TOKEN") as fallback.
-
-        import os
         default_token = os.getenv("TELEGRAM_TOKEN")
+
+        # Determine extension
+        ext = ".txt"
+        if fmt == "ovpn":
+            ext = ".ovpn"
+        elif fmt == "bundle":
+            ext = ".zip"
+
+        filename = f"{route_name}_{fmt}_{new_hash[:8]}{ext}"
 
         published_any = False
 
@@ -64,15 +57,9 @@ class PublishPipeline:
             caption = template.format(
                 timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 sha12=new_hash[:12],
-                count=build_result.get("count", "?")
+                count=build_result.get("count", "?"),
+                format=fmt
             )
-
-            # Filename
-            # Heuristic extension
-            ext = ".txt"
-            # Try to guess from route formats?
-            # If route name implies extension...
-            filename = f"{route_name}_{new_hash[:8]}{ext}"
 
             try:
                 pub.publish(chat_id, build_result["data"], filename, caption)
@@ -81,5 +68,5 @@ class PublishPipeline:
                 logger.error(f"Failed to publish to {chat_id}")
 
         if published_any:
-            self.state_repo.mark_published(route_name, new_hash)
-            logger.info(f"Published {route_name} ({new_hash})")
+            self.state_repo.mark_published(tracking_key, new_hash)
+            logger.info(f"Published {tracking_key} ({new_hash})")

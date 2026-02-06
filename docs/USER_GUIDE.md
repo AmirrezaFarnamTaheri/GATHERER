@@ -69,3 +69,41 @@ MergeBot is designed to run periodically on GitHub Actions without a dedicated s
 - **Transformation**: Files are parsed into a normalized format (if supported) or treated as opaque blobs.
 - **Merging**: Compatible formats are combined into a single artifact.
 - **Publishing**: The merged artifact is sent to the destination channel.
+
+## New Features
+
+### 72-Hour Fresh Start Rule
+When a Telegram source is added for the first time (or if the state is reset), the bot will only process messages from the last 72 hours. This prevents the bot from attempting to download the entire history of a channel, which could take a long time and hit API limits.
+
+### Multi-Format Output
+Routes can now specify multiple output formats.
+
+The bot will generate and publish a separate artifact for each requested format.
+
+### Artifact Verification
+A verification script `scripts/verify_output.py` is included to:
+1. Scan generated artifacts.
+2. Verify their integrity and format (e.g., checking if V2Ray links are valid).
+3. Prepare them for distribution (copying to a clean `dist/` directory).
+
+This script runs automatically in the CI/CD pipeline, and the results are uploaded as GitHub Artifacts (downloadable from the Actions tab).
+
+## New Features
+
+### 72-Hour Fresh Start Rule
+When a Telegram source is added for the first time (or if the state is reset), the bot will only process messages from the last 72 hours. This prevents the bot from attempting to download the entire history of a channel, which could take a long time and hit API limits.
+
+### Multi-Format Output
+Routes can now specify multiple output formats.
+```yaml
+formats: ["npvt", "ovpn", "bundle"]
+```
+The bot will generate and publish a separate artifact for each requested format.
+
+### Artifact Verification
+A verification script `scripts/verify_output.py` is included to:
+1. Scan generated artifacts.
+2. Verify their integrity and format (e.g., checking if V2Ray links are valid).
+3. Prepare them for distribution (copying to a clean `dist/` directory).
+
+This script runs automatically in the CI/CD pipeline, and the results are uploaded as GitHub Artifacts (downloadable from the Actions tab).

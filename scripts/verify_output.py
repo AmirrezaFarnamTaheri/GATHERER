@@ -16,6 +16,10 @@ def main():
 
     print(f"Scanning artifacts in {artifacts_dir}...")
 
+    # Copy self to dist
+    shutil.copy(__file__, dist_dir / "verify_output.py")
+    print("Copied verification script to dist/verify_output.py")
+
     if not artifacts_dir.exists():
         print("Artifacts directory not found.")
         return
