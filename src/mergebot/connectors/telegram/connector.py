@@ -31,6 +31,18 @@ class TelegramConnector(SourceConnector):
         self.offset = state.get("offset", 0) if state else 0
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
+        # Basic validation for Bot Token format
+        if ':' in self.token:
+            prefix = self.token.split(':')[0]
+            if not prefix.isdigit():
+                 logger.warning(f"The provided token starts with '{prefix}', which is not a digit. "
+                                f"Ensure this is a valid Telegram Bot API token (e.g., '123456:ABC-DEF...'), "
+                                f"and NOT a Telethon session string.")
+        else:
+             logger.warning(f"The provided token does not contain a colon. "
+                            f"Ensure this is a valid Telegram Bot API token.")
+
+
     def _make_request(self, method: str, params: Dict[str, Any] = {}) -> Dict[str, Any]:
         url = f"{self.base_url}/{method}"
         start_time = time.time()
@@ -148,16 +160,30 @@ class TelegramConnector(SourceConnector):
 
         logger.info(f"Fetched {fetched_updates_count} updates. Processing cache...")
 
+        if fetched_updates_count == 0 and is_fresh_start:
+             logger.warning("Fetched 0 updates on a fresh start. Note that Telegram Bot API does NOT provide "
+                            "historical messages. It only receives new messages sent AFTER the bot was started. "
+                            "If you need history, consider using the 'telegram_user' source type.")
+
         # Now yield items from cache relevant to THIS source
         sorted_ids = sorted(shared['updates'].keys())
-        processed_count = 0
-        yielded_count = 0
+
+        # Statistics counters
+        stats = {
+            "skipped_chat_mismatch": 0,
+            "skipped_old_timestamp": 0,
+            "skipped_no_document": 0,
+            "skipped_size_limit": 0,
+            "processed_updates": 0,
+            "yielded_items": 0
+        }
 
         for update_id in sorted_ids:
             if update_id <= local_offset:
                 continue
 
-            processed_count += 1
+            stats["processed_updates"] += 1
+
             # Update local offset tracking
             self.offset = max(self.offset, update_id)
 
@@ -171,24 +197,28 @@ class TelegramConnector(SourceConnector):
             msg_chat_id = str(msg.get("chat", {}).get("id"))
             if msg_chat_id != self.target_chat_id:
                 # logger.debug(f"Update {update_id} skipped: Chat ID {msg_chat_id} != target {self.target_chat_id}")
+                stats["skipped_chat_mismatch"] += 1
                 continue
 
             # Check timestamp for fresh starts
             msg_date = msg.get("date", 0)
             if is_fresh_start and msg_date < cutoff_time:
                 # logger.debug(f"Update {update_id} skipped: Too old (timestamp {msg_date} < {cutoff_time})")
+                stats["skipped_old_timestamp"] += 1
                 continue
 
             # Check for document
             doc = msg.get("document")
             if not doc:
                 # logger.debug(f"Update {update_id} skipped: No document")
+                stats["skipped_no_document"] += 1
                 continue
 
             # Check file size (20MB limit)
             file_size = doc.get("file_size", 0)
             if file_size > 20 * 1024 * 1024:
                 logger.warning(f"Skipping file {doc.get('file_name')} (Size: {file_size} > 20MB limit)")
+                stats["skipped_size_limit"] += 1
                 continue
 
             file_id = doc.get("file_id")
@@ -207,7 +237,7 @@ class TelegramConnector(SourceConnector):
             # Download
             data = self._download_file(file_path)
             if data:
-                yielded_count += 1
+                stats["yielded_items"] += 1
                 yield TelegramItem(
                     external_id=str(msg["message_id"]),
                     data=data,
@@ -219,7 +249,7 @@ class TelegramConnector(SourceConnector):
                     }
                 )
 
-        logger.info(f"Connector processing done. Processed {processed_count} new updates, yielded {yielded_count} items.")
+        logger.info(f"Connector processing done. Stats: {json.dumps(stats)}")
 
     def get_state(self) -> Dict[str, Any]:
         return {"offset": self.offset}

@@ -96,6 +96,10 @@ class IngestionPipeline:
                 f"took {duration:.2f}s."
             )
 
+            if count == 0 and skipped_count == 0:
+                logger.info(f"[Ingest] No items were ingested or skipped for {source_id}. "
+                            f"Check connector logs above for details on filtered/ignored updates.")
+
         except Exception as e:
             logger.exception(f"[Ingest] Failed to update state for source {source_id}: {e}")
             raise
