@@ -46,8 +46,9 @@ class TestOrchestrator(unittest.TestCase):
     @patch('mergebot.core.orchestrator.TransformPipeline')
     @patch('mergebot.core.orchestrator.BuildPipeline')
     @patch('mergebot.core.orchestrator.PublishPipeline')
-    @patch('mergebot.core.orchestrator.TelegramConnector')
-    @patch('mergebot.core.orchestrator.TelegramUserConnector')
+    # Use sys.modules patching or patch where the class is defined because import is local
+    @patch('mergebot.connectors.telegram.connector.TelegramConnector')
+    @patch('mergebot.connectors.telegram_user.connector.TelegramUserConnector')
     def test_run_orchestrator(self, MockUserConn, MockBotConn, MockPub, MockBuild, MockTrans, MockIngest, MockReg, MockRepo, MockOpenDB, MockArtStore, MockRawStore):
 
         orch = Orchestrator(self.config)

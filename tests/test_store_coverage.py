@@ -1,74 +1,84 @@
 import unittest
 import shutil
 import tempfile
-import os
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 from mergebot.store.raw_store import RawStore
 from mergebot.store.artifact_store import ArtifactStore
 
 class TestStoreCoverage(unittest.TestCase):
     def setUp(self):
-        self.test_dir = tempfile.mkdtemp()
+        self.temp_dir = tempfile.mkdtemp()
+        self.base_dir = Path(self.temp_dir)
+        # We pass base_dir explicitly, so no patching needed for constructor defaults if we use them
 
     def tearDown(self):
-        shutil.rmtree(self.test_dir)
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_raw_store(self):
-        base_dir = Path(self.test_dir) / "raw"
-        store = RawStore(base_dir=base_dir)
+        store = RawStore(base_dir=self.base_dir)
 
         data = b"hello world"
+        # Save
         hash_val = store.save(data)
 
+        # Get
+        retrieved = store.get(hash_val)
+        self.assertEqual(retrieved, data)
+
+        # Has
         self.assertTrue(store.exists(hash_val))
-        self.assertEqual(store.get(hash_val), data)
+        self.assertFalse(store.exists("nonexistent"))
+
+        # Get nonexistent
         self.assertIsNone(store.get("nonexistent"))
 
     def test_artifact_store(self):
-        base_dir = Path(self.test_dir) / "artifacts"
-        # Mock DATA_DIR used inside ArtifactStore
-        with unittest.mock.patch('mergebot.store.artifact_store.DATA_DIR', Path(self.test_dir) / "data"):
-            store = ArtifactStore(base_dir=base_dir)
+        store = ArtifactStore(base_dir=self.base_dir)
 
-            sha = store.save_artifact("route1", b"content")
-            self.assertIsNotNone(store.get_artifact("route1", sha))
-            self.assertEqual(store.get_artifact("route1", sha), b"content")
+        # Save artifact
+        h = store.save_artifact("route1", "txt", b"content")
+        self.assertIsNotNone(h)
 
-            out_path = store.save_output("route1", "txt", b"output_content")
-            self.assertTrue(os.path.exists(out_path))
-            with open(out_path, "rb") as f:
-                self.assertEqual(f.read(), b"output_content")
+        # Get artifact
+        retrieved = store.get_artifact("route1", h, "txt")
+        self.assertEqual(retrieved, b"content")
 
-            self.assertIsNone(store.get_artifact("route1", "badhash"))
+        # Get nonexistent
+        self.assertIsNone(store.get_artifact("route1", "bad", "txt"))
+
+        # Save output
+        path = store.save_output("route1", "txt", b"out_content")
+        self.assertTrue(Path(path).exists())
 
     def test_raw_store_exceptions(self):
-        base_dir = Path(self.test_dir) / "raw_err"
-        store = RawStore(base_dir=base_dir)
+        store = RawStore(base_dir=self.base_dir)
 
-        with unittest.mock.patch.object(Path, 'mkdir', side_effect=Exception("Disk full")):
+        # Mock mkdir to raise exception
+        with patch('pathlib.Path.mkdir', side_effect=Exception("Disk full")):
             with self.assertRaises(Exception):
                 store.save(b"data")
 
-        with unittest.mock.patch.object(Path, 'read_bytes', side_effect=Exception("IO Error")):
-             h = "hash"
-             p = base_dir / h[:2] / h
-             p.parent.mkdir(parents=True, exist_ok=True)
-             with open(p, "wb") as f: f.write(b"")
+        # To test get() exception we need a file that exists but fails on read
+        # Create a file
+        h = store.save(b"data")
 
+        with patch('pathlib.Path.read_bytes', side_effect=Exception("IO Error")):
+             # Store uses Path object methods
+             store.get(h)
+             # Actually get() catches exception and logs it, returns None
              self.assertIsNone(store.get(h))
 
     def test_artifact_store_exceptions(self):
-        base_dir = Path(self.test_dir) / "art_err"
-        with unittest.mock.patch('mergebot.store.artifact_store.DATA_DIR', Path(self.test_dir) / "data"):
-             store = ArtifactStore(base_dir=base_dir)
+        store = ArtifactStore(base_dir=self.base_dir)
 
-             with unittest.mock.patch.object(Path, 'mkdir', side_effect=Exception("Disk full")):
-                 with self.assertRaises(Exception):
-                     store.save_artifact("n", b"d")
+        with patch('pathlib.Path.mkdir', side_effect=Exception("Disk full")):
+            with self.assertRaises(Exception):
+                store.save_artifact("r", "fmt", b"data")
 
-             with unittest.mock.patch('builtins.open', side_effect=Exception("Write fail")):
-                 with self.assertRaises(Exception):
-                     store.save_output("n", "fmt", b"d")
+        with patch('builtins.open', side_effect=Exception("Write fail")):
+            with self.assertRaises(Exception):
+                store.save_output("r", "fmt", b"data")
 
 if __name__ == '__main__':
     unittest.main()

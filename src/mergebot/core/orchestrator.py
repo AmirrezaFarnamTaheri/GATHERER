@@ -1,5 +1,6 @@
 import logging
 import time
+import concurrent.futures
 from ..store.paths import STATE_DB_PATH
 from ..store.raw_store import RawStore
 from ..store.artifact_store import ArtifactStore
@@ -7,8 +8,6 @@ from ..state.db import open_db
 from ..state.repo import StateRepo
 from ..formats.registry import FormatRegistry
 from ..formats.register_builtin import register_all_formats
-from ..connectors.telegram.connector import TelegramConnector
-from ..connectors.telegram_user.connector import TelegramUserConnector
 from ..pipeline.ingest import IngestionPipeline
 from ..pipeline.transform import TransformPipeline
 from ..pipeline.build import BuildPipeline
@@ -46,35 +45,25 @@ class Orchestrator:
         self.publish_pipeline = PublishPipeline(self.repo)
         logger.info("[Orchestrator] Pipelines initialized.")
 
-    def run(self):
-        start_time = time.time()
-        run_id = int(start_time)
-        logger.info(f"[Orchestrator] Starting run (ID: {run_id})...")
+    def _run_ingest_source(self, src_conf):
+        """Helper to run ingestion for a single source, designed for parallel execution."""
+        # Delayed import to avoid potential circular dependencies if any
+        from ..connectors.telegram.connector import TelegramConnector
+        from ..connectors.telegram_user.connector import TelegramUserConnector
 
-        # 1. Ingest
-        ingest_start = time.time()
-        ingest_count = 0
-        ingest_failed = 0
-        total_sources = len(self.config.sources)
-
-        logger.info(f"[Orchestrator] === Phase 1: Ingestion ({total_sources} sources) ===")
-
-        for src_conf in self.config.sources:
+        try:
             if src_conf.type == "telegram" and src_conf.telegram:
-                logger.info(f"[Orchestrator] Running ingestion for source: {src_conf.id}")
+                logger.info(f"[Orchestrator] Starting ingestion worker for source: {src_conf.id}")
+                # We instantiate a fresh connector for thread safety if needed (though shared state is class level)
                 conn = TelegramConnector(
                     token=src_conf.telegram.token,
                     chat_id=src_conf.telegram.chat_id,
                     state=self.repo.get_source_state(src_conf.id)
                 )
-                try:
-                    self.ingest_pipeline.run(src_conf.id, conn, source_type=src_conf.type)
-                    ingest_count += 1
-                except Exception as e:
-                    logger.exception(f"[Orchestrator] Ingest failed for source '{src_conf.id}': {e}")
-                    ingest_failed += 1
+                self.ingest_pipeline.run(src_conf.id, conn, source_type=src_conf.type)
+                return True
             elif src_conf.type == "telegram_user" and src_conf.telegram_user:
-                logger.info(f"[Orchestrator] Running ingestion for source: {src_conf.id} (Telegram User)")
+                logger.info(f"[Orchestrator] Starting ingestion worker for source: {src_conf.id} (Telegram User)")
                 conn = TelegramUserConnector(
                     api_id=src_conf.telegram_user.api_id,
                     api_hash=src_conf.telegram_user.api_hash,
@@ -82,15 +71,43 @@ class Orchestrator:
                     peer=src_conf.telegram_user.peer,
                     state=self.repo.get_source_state(src_conf.id)
                 )
-                try:
-                    self.ingest_pipeline.run(src_conf.id, conn, source_type=src_conf.type)
-                    ingest_count += 1
-                except Exception as e:
-                    logger.exception(f"[Orchestrator] Ingest failed for source '{src_conf.id}': {e}")
-                    ingest_failed += 1
+                self.ingest_pipeline.run(src_conf.id, conn, source_type=src_conf.type)
+                return True
             else:
                 logger.warning(f"[Orchestrator] Skipping source '{src_conf.id}': Unsupported type or missing config.")
-                ingest_failed += 1
+                return False
+        except Exception as e:
+            logger.exception(f"[Orchestrator] Ingest worker failed for source '{src_conf.id}': {e}")
+            return False
+
+    def run(self):
+        start_time = time.time()
+        run_id = int(start_time)
+        logger.info(f"[Orchestrator] Starting run (ID: {run_id})...")
+
+        # 1. Ingest (Parallelized)
+        ingest_start = time.time()
+        ingest_count = 0
+        ingest_failed = 0
+        total_sources = len(self.config.sources)
+
+        logger.info(f"[Orchestrator] === Phase 1: Ingestion ({total_sources} sources) - Parallel Workers: 3 ===")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            # Submit all tasks
+            future_to_src = {executor.submit(self._run_ingest_source, src): src for src in self.config.sources}
+
+            for future in concurrent.futures.as_completed(future_to_src):
+                src = future_to_src[future]
+                try:
+                    success = future.result()
+                    if success:
+                        ingest_count += 1
+                    else:
+                        ingest_failed += 1
+                except Exception as exc:
+                    logger.error(f"[Orchestrator] Generated exception for {src.id}: {exc}")
+                    ingest_failed += 1
 
         ingest_duration = time.time() - ingest_start
         logger.info(f"[Orchestrator] Ingestion phase complete in {ingest_duration:.2f}s. Success: {ingest_count}, Failed/Skipped: {ingest_failed}.")
