@@ -19,8 +19,9 @@ def setup_logging(log_level: int = logging.INFO, log_file: Optional[str] = None)
         root_logger.handlers = []
 
     # Detailed formatter
+    # Including threadName, module, pathname for maximum context
     formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)-8s | %(process)d | %(name)s:%(funcName)s:%(lineno)d - %(message)s'
+        '%(asctime)s | %(levelname)-8s | PID:%(process)d | Thread:%(threadName)s | %(name)s | %(module)s:%(funcName)s:%(lineno)d | %(pathname)s - %(message)s'
     )
 
     # Console Handler
@@ -44,6 +45,9 @@ def setup_logging(log_level: int = logging.INFO, log_file: Optional[str] = None)
             print(f"Failed to set up file logging at {log_file}: {e}", file=sys.stderr)
 
     # Adjust external libraries to reduce noise
+    # We keep these at WARNING unless the root level is specifically DEBUG,
+    # in which case we might want to see them?
+    # For now, keeping them quiet is safer for readability of app logs.
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("telethon").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
