@@ -2,6 +2,7 @@ import yaml
 import logging
 from pathlib import Path
 from .schema import AppConfig
+from .env_expand import recursive_expand
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,9 @@ def load_config(path: str) -> AppConfig:
 
     with open(p, "r") as f:
         data = yaml.safe_load(f)
+
+    # Expand environment variables
+    data = recursive_expand(data)
 
     # Use Pydantic model_validate (v2) or parse_obj (v1)
     # We installed Pydantic v2
