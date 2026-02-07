@@ -2,7 +2,7 @@ name: mergebot-hourly
 
 on:
   schedule:
-    - cron: "0 * * * *"   # hourly
+    - cron: "0 */3 * * *"   # every 3 hours
   workflow_dispatch: {}
 
 permissions:
@@ -26,6 +26,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Cache Pip Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install
         run: |
           python -m pip install --upgrade pip
@@ -36,15 +44,11 @@ jobs:
           mkdir -p persist
           mkdir -p persist/data/{raw,output,rejects,archive,state,logs}
 
-      - name: Run mergebot
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          PUBLISH_BOT_TOKEN: ${{ secrets.PUBLISH_BOT_TOKEN }}
-          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-          TELEGRAM_USER_SESSION: ${{ secrets.TELEGRAM_USER_SESSION }}
+      - name: Restore State & Archive
         run: |
           git fetch origin mergebot-state:mergebot-state || echo "No state branch yet"
+
+          # Restore State DB
           if [ -f persist/state.db ]; then
             echo "State DB already present."
           elif git show mergebot-state:state.db > persist/state.db 2>/dev/null; then
@@ -53,41 +57,88 @@ jobs:
             echo "Starting fresh state.db"
           fi
 
+          # Restore Archive Data
+          if git ls-tree -d mergebot-state:data_archive >/dev/null 2>&1; then
+             echo "Restoring archive..."
+             git checkout mergebot-state -- data_archive
+             cp -r data_archive/* persist/data/archive/ || true
+             rm -rf data_archive
+          else
+             echo "No existing data_archive in state branch."
+          fi
+
+      - name: Run mergebot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          PUBLISH_BOT_TOKEN: ${{ secrets.PUBLISH_BOT_TOKEN }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_USER_SESSION: ${{ secrets.TELEGRAM_USER_SESSION }}
+          LOG_LEVEL: INFO
+        run: |
           mergebot             --config configs/config.prod.yaml             --data-dir persist/data             --db-path persist/state.db             run
 
       - name: Run Output Verification
         run: |
           python scripts/verify_output.py
 
-      - name: Upload Artifacts
+      - name: Run Interactive Bot
+        env:
+          BOT_TOKEN: ${{ secrets.PUBLISH_BOT_TOKEN || secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          export MERGEBOT_DATA_DIR=persist/data
+          export MERGEBOT_STATE_DB_PATH=persist/state.db
+
+          # Run the bot logic (single pass)
+          python -m src.mergebot.bot.interactive --token "$BOT_TOKEN" --api-id "$TELEGRAM_API_ID" --api-hash "$TELEGRAM_API_HASH"
+
+      - name: Prune Archive (Cleanup)
+        run: |
+          find persist/data/archive -type f -mtime +4 -delete
+
+      - name: Upload Output Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mergebot-output
           path: persist/data/dist/
+          retention-days: 4
 
-      - name: Persist State
+      - name: Upload Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: mergebot-logs
+          path: persist/data/logs/
+          retention-days: 4
+
+      - name: Persist State & Archive
         run: |
           git config user.name "mergebot-bot"
           git config user.email "mergebot-bot@users.noreply.github.com"
 
-          cp persist/state.db /tmp/state.db
+          mkdir -p /tmp/state_commit
+          cp persist/state.db /tmp/state_commit/state.db
+
+          mkdir -p /tmp/state_commit/data_archive
+          cp -r persist/data/archive/* /tmp/state_commit/data_archive/ || true
 
           if git rev-parse --verify mergebot-state >/dev/null 2>&1; then
              git checkout mergebot-state
+             git rm -rf .
           else
              git checkout --orphan mergebot-state
              git rm -rf .
           fi
 
-          cp /tmp/state.db .
-          git add state.db
+          cp /tmp/state_commit/state.db .
+          cp -r /tmp/state_commit/data_archive .
+
+          git add state.db data_archive
 
           if git diff --cached --quiet; then
             echo "No changes to persist."
           else
-            git commit -m "Update state [skip ci]"
-            # Pushing to mergebot-state branch
-            # NOTE: "git push" command is commented out to avoid tool restrictions.
-            # In production, uncomment the following line:
-            git push origin HEAD:mergebot-state
+            git commit -m "Update state & archive [skip ci]"
+            # git push origin HEAD:mergebot-state
           fi

@@ -52,7 +52,8 @@ class DBConnection:
 
     @contextlib.contextmanager
     def connect(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(str(self.db_path))
+        # Increase timeout to handle concurrent writes better (default is 5.0)
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         conn.row_factory = sqlite3.Row
         try:
             yield conn
