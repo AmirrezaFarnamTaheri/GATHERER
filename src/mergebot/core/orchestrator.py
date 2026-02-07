@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 import concurrent.futures
@@ -47,6 +48,12 @@ class Orchestrator:
 
     def _run_ingest_source(self, src_conf):
         """Helper to run ingestion for a single source, designed for parallel execution."""
+        # Ensure asyncio loop exists for this thread (required for Telethon sync)
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
         # Delayed import to avoid potential circular dependencies if any
         from ..connectors.telegram.connector import TelegramConnector
         from ..connectors.telegram_user.connector import TelegramUserConnector
