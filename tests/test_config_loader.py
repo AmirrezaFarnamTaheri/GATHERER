@@ -122,5 +122,36 @@ class TestConfigLoader(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             load_config(Path("non_existent.yaml"))
 
+    def test_load_config_with_env_vars(self):
+        config_content = """
+        sources:
+          - id: env_source
+            type: telegram_user
+            telegram_user:
+              api_id: ${TEST_API_ID_ENV}
+              api_hash: ${TEST_API_HASH_ENV}
+              session: "session"
+              peer: "peer"
+            selector:
+              include_formats: ["all"]
+        publishing:
+          routes: []
+        """
+        with open(self.config_path, "w") as f:
+            f.write(config_content)
+
+        os.environ['TEST_API_ID_ENV'] = '98765'
+        os.environ['TEST_API_HASH_ENV'] = 'secret_hash'
+
+        try:
+            config = load_config(self.config_path)
+            self.assertEqual(config.sources[0].telegram_user.api_id, 98765)
+            self.assertEqual(config.sources[0].telegram_user.api_hash, 'secret_hash')
+        finally:
+            if 'TEST_API_ID_ENV' in os.environ:
+                del os.environ['TEST_API_ID_ENV']
+            if 'TEST_API_HASH_ENV' in os.environ:
+                del os.environ['TEST_API_HASH_ENV']
+
 if __name__ == '__main__':
     unittest.main()
