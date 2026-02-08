@@ -7,7 +7,6 @@ def process_file(filepath):
 
     new_lines = []
     skip_demo_source = False
-    skip_destinations = False
 
     for line in lines:
         stripped = line.strip()
@@ -30,23 +29,8 @@ def process_file(filepath):
             new_lines.append(line.replace("demo_output", "all_sources"))
             continue
 
-        # 3. Handle destinations removal
-        # We assume destinations is inside the route we just renamed or processing
-        # Since config structure is consistent, destinations: comes after formats:
-        if stripped.startswith("destinations:"):
-             # Only skip if we are cleaning up (we assume we want to remove all destinations for now as requested)
-             # User said "Remove anything demo all over".
-             # Since the only route was demo_output, we remove its destinations.
-             skip_destinations = True
-             continue
-
-        if skip_destinations:
-            # Stop skipping if indentation returns to route level (2 spaces) or top level (0 spaces)
-            # destinations is usually at 4 spaces.
-            if indent <= 2 and stripped:
-                skip_destinations = False
-            else:
-                continue
+        # 3. Handle destinations removal logic REMOVED.
+        # We preserve destinations now.
 
         new_lines.append(line)
 

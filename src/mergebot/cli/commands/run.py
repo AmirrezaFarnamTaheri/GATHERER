@@ -12,7 +12,13 @@ def run_command(config_path: str):
     # Setup logging
     log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
     log_level = getattr(logging, log_level_str, logging.INFO)
-    setup_logging(log_level=log_level)
+
+    # Configure log file
+    log_dir = Path("persist/data/logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = log_dir / "mergebot.log"
+
+    setup_logging(log_level=log_level, log_file=str(log_file))
 
     cfg_path = Path(config_path)
     if not cfg_path.exists():
